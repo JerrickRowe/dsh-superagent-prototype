@@ -21,6 +21,8 @@ export function family<V, A extends unknown[] = [string]>(prefix: string, format
 export const KV = {
   /** Store: current database schema version. */
   store: { schema: record<number>('schema') },
+  /** Telegram Source: the `getUpdates` read cursor (highest `update_id` taken in). */
+  telegram: { cursor: record<number>('telegram-cursor') },
   /** Settings: current revision, per-block revision, and saved settings snapshots (including the current one). */
   settings: { revision: record<number>('settings-revision'),
     block: family<number, [block: SettingsSave]>('settings-block-revision:'),
