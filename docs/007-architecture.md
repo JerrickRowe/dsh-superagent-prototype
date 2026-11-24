@@ -376,8 +376,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/feishu-image.ts` | Reads a Feishu message's image as an attachment for the assessing Session |
 | `src/sources/telegram.ts` | The Telegram kind and plugin entry, exported as `./telegram-watch` |
 | `src/sources/telegram-trigger.ts` | Telegram Bot API updates as Triggers, the configuration schema, scope and chat links |
-| `src/sources/telegram-loops.ts` | The Telegram loop: the `getUpdates` long poll and its read cursor |
-| `src/sources/telegram-channel.ts` | The Telegram Channel: replies split at 4096 chars, `sent` or `gone` |
+| `src/sources/telegram-loops.ts` | The Telegram loop: the `getUpdates` long poll, its read cursor, and the forum topic opened for a mentioned message so a topic continues its conversation |
+| `src/sources/telegram-channel.ts` | The Telegram Channel: replies split at 4096 chars, posted into the forum topic when the address has one, `sent` or `gone` |
 | `src/sources/telegram-read.ts` | The `telegram/` thread window for assessments, read from the messages the bot received |
 | `src/client/index.tsx` | The client plugin entry: the sidebar entry, the main panel and the page in DeepSeek Harness's Plugin Manager |
 | `src/client/app.tsx` | The panel: header, search, glossary, tabs and the page of the current route |

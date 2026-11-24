@@ -35,11 +35,13 @@ export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>
 export async function sendTelegram(message: OutboundMessage, fetchImpl: Fetcher = fetch): Promise<'sent' | 'gone'> {
   const token = activeToken
   if (!token) throw new Error('The Telegram Source has no Bot Token')
-  const { chatId, messageId } = message.channel.address
+  const { chatId, messageId, topic } = message.channel.address
   if (!chatId) throw new Error('Missing Telegram reply target')
   const chunks = chunkText(message.text)
   for (let index = 0; index < chunks.length; index++) {
     const payload: Record<string, unknown> = { chat_id: chatId, text: chunks[index] }
+    // A reply into a forum topic carries its thread on every chunk, so a split answer stays in the same topic.
+    if (topic) payload.message_thread_id = Number(topic)
     if (index === 0 && messageId) payload.reply_to_message_id = Number(messageId)
     const response = await fetchImpl(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',

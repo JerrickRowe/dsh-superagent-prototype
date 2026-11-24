@@ -12,7 +12,7 @@ import { testDeployment } from './fixtures/deployment.ts'
 import { SettingsSchema, settingsPolicy } from '../src/policy.ts'
 import { sourceContextOf, type SourceContextDeps } from '../src/app/source-context.ts'
 import { apply as applyTelegram, telegramKind, telegramTrigger, telegramScope, normalizeText, mentionsBot } from '../src/sources/telegram.ts'
-import { pollTelegram, resolveBot, runTelegram } from '../src/sources/telegram-loops.ts'
+import { pollTelegram, resolveBot, runTelegram, topicName } from '../src/sources/telegram-loops.ts'
 import { sendTelegram, chunkText, setTelegramToken } from '../src/sources/telegram-channel.ts'
 import { telegramWindow, threadCacheKey, remember, WINDOW_MESSAGES, WINDOW_THREADS } from '../src/sources/telegram-read.ts'
 import { TelegramConfigSchema, telegramToken, type TelegramUpdate } from '../src/sources/telegram-trigger.ts'
@@ -84,7 +84,7 @@ describe('telegram source', () => {
     expect(mentionsBot('no mention', 'agent_bot')).toBe(false)
   })
   it('scopes listed chats, direct messages and other chats', () => {
-    const config = { token: 't', chats: [{ chatId: '-100123', listen: 'mentions' as const }], directMessages: true, otherChats: 'none' as const, pollTimeoutSeconds: 25, pollIntervalSeconds: 1 }
+    const config = TelegramConfigSchema.parse({ token: 't', chats: [{ chatId: '-100123', listen: 'mentions' }] })
     expect(telegramScope({ meta: { chatId: '-100123' } }, config)).toEqual({ listened: true, observed: false, row: '-100123' })
     expect(telegramScope({ meta: { chatId: '-100999' } }, config).listened).toBe(false)
     expect(telegramScope({ meta: { direct: true } }, config).listened).toBe(true)
@@ -124,7 +124,7 @@ describe('telegram source', () => {
       return { ok: true, status: 200, json: async () => ({ ok: true, result: [update(7, {}), update(8, { message_id: 7 })] }) } as Response
     })
     const bot = await resolveBot('tok', fetchImpl)
-    const result = await pollTelegram(h.ctx, { token: 'tok', chats: [{ chatId: '-100123', listen: 'all' }], directMessages: true, otherChats: 'none', pollTimeoutSeconds: 25, pollIntervalSeconds: 1 }, 'tok', bot, fetchImpl)
+    const result = await pollTelegram(h.ctx, TelegramConfigSchema.parse({ token: 'tok', chats: [{ chatId: '-100123', listen: 'all' }] }), 'tok', bot, fetchImpl)
     expect(result).toEqual({ read: 2, unreadable: 0 })
     expect(h.receive).toHaveBeenCalledTimes(2)
     expect(h.store.get(KV.telegram.cursor)).toBe(9)
@@ -171,6 +171,66 @@ describe('telegram source', () => {
     expect(telegramWindow.get('-100123:1')!.has('1')).toBe(false)
     for (let thread = 0; thread < WINDOW_THREADS + 3; thread++) remember(`-100999:${thread}`, { ...base, message_id: thread })
     expect(telegramWindow.size).toBe(WINDOW_THREADS)
+  })
+  it('resolves a thread into a topic reply target while keeping the conversation root', () => {
+    const trigger = telegramTrigger(update(9, {}), BOT, undefined, { root: '4', topic: 42 })!
+    expect(trigger.meta.root).toBe('4')
+    expect(trigger.meta.topic).toBe(42)
+    expect(trigger.channel!.address).toMatchObject({ chatId: '-100123', messageId: '9', topic: '42' })
+    expect(trigger.threads).toEqual([{ source: 'telegram', id: '-100123:4' }])
+  })
+  it('opens a forum topic for a mentioned message and continues it from messages inside the topic', async () => {
+    const h = host()
+    const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as Response
+    const round = (updates: unknown[]) => vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/getChat')) return json({ ok: true, result: { is_forum: true } })
+      if (url.includes('/createForumTopic')) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ chat_id: -100123, name: 'read the README' })
+        return json({ ok: true, result: { message_thread_id: 77 } })
+      }
+      return json({ ok: true, result: updates })
+    })
+    const config = TelegramConfigSchema.parse({ token: 'tok', chats: [{ chatId: '-100123', listen: 'mentions' }] })
+    await pollTelegram(h.ctx, config, 'tok', BOT, round([update(10, { text: '@agent_bot read the README' })]))
+    const opened = h.receive.mock.calls[0]![0] as Trigger
+    expect(opened.channel!.address).toMatchObject({ chatId: '-100123', topic: '77' })
+    expect(opened.threads).toEqual([{ source: 'telegram', id: '-100123:10' }])
+    expect(h.store.get(KV.telegram.topics('-100123', '10'))).toBe(77)
+    expect(h.store.get(KV.telegram.origins('-100123', 77))).toBe('10')
+    // A message inside the opened topic continues the same conversation instead of starting another one.
+    await pollTelegram(h.ctx, config, 'tok', BOT, round([update(20, { message_thread_id: 77, text: 'and the docs' })]))
+    const continued = h.receive.mock.calls[1]![0] as Trigger
+    expect(continued.threads).toEqual([{ source: 'telegram', id: '-100123:10' }])
+    expect(continued.channel!.address).toMatchObject({ topic: '77', messageId: '20' })
+    h.store.close()
+  })
+  it('answers in place when a topic cannot be opened', async () => {
+    const h = host()
+    const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as Response
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.includes('/getChat')) return json({ ok: true, result: { is_forum: true } })
+      if (url.includes('/createForumTopic')) return json({ ok: false, error_code: 400, description: 'not enough rights' })
+      return json({ ok: true, result: [update(11, { text: '@agent_bot fix it' })] })
+    })
+    const config = TelegramConfigSchema.parse({ token: 'tok', chats: [{ chatId: '-100123', listen: 'mentions' }] })
+    await pollTelegram(h.ctx, config, 'tok', BOT, fetchImpl)
+    expect(h.receive).toHaveBeenCalledTimes(1)
+    const trigger = h.receive.mock.calls[0]![0] as Trigger
+    expect(trigger.channel!.address.topic).toBeUndefined()
+    expect(trigger.threads).toEqual([{ source: 'telegram', id: '-100123:11' }])
+    h.store.close()
+  })
+  it('posts into a forum topic when the address carries one', async () => {
+    setTelegramToken('tok')
+    const sent = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, status: 200, json: async () => ({ ok: true }) }) as Response)
+    await sendTelegram({ id: 'm2', channel: { source: 'telegram', thread: 'telegram:-100123:1',
+      address: { chatId: '-100123', messageId: '1', topic: '77' } }, text: 'hi', kind: 'reply' }, sent)
+    expect(JSON.parse(String(sent.mock.calls[0]![1]!.body))).toMatchObject({ chat_id: '-100123', message_thread_id: 77, reply_to_message_id: 1 })
+  })
+  it('names a topic after the message and falls back when it is empty', () => {
+    expect(topicName('@agent_bot   read the README ')).toBe('read the README')
+    expect(topicName('   ')).toBe('dsh-superagent')
+    expect(topicName('x'.repeat(200)).length).toBe(60)
   })
   it('registers its kind and unregisters on disposal', async () => {
     // A fresh registry so the plugin's own registration is visible.
