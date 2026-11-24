@@ -60,7 +60,17 @@ def ps(*options, check=False):
     for line in result.stdout.splitlines():
         parts = line.split(None, 2)
         if len(parts) == 3 and parts[0].isdigit():
-            yield int(parts[0]), parts[1], parts[2].split()
+            args = parts[2].split()
+            name = parts[1]
+            # Some runtimes (Node 24) name their main thread, so `ps` reports comm as "MainThread"
+            # instead of the executable. Fall back to the basename of the first arguments.
+            if name not in ('node', 'dsh'):
+                for word in args[:2]:
+                    base = os.path.basename(word)
+                    if base in ('node', 'dsh'):
+                        name = base
+                        break
+            yield int(parts[0]), name, args
 
 
 def running(pid, profile):

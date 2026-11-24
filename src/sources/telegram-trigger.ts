@@ -93,6 +93,10 @@ export function telegramTrigger(update: TelegramUpdate, bot?: TelegramBotInfo | 
     ?? (message.message_thread_id !== undefined ? String(message.message_thread_id) : String(message.message_id))
   const thread = `${chatId}:${root}`
   const text = normalizeText(message.text ?? '', bot?.username)
+  // A message the Bot API gives no text field (a bare photo, a voice note) carries nothing to assess: its caption lives
+  // in another field this Source does not read. A text message that is only the bot's mention is the same empty request,
+  // so both keep the cursor moving without opening a Ticket.
+  if (!text) return undefined
   const addressed = isDirect ? 'direct' as const
     : mentionsBot(message.text ?? '', bot?.username) ? 'mention' as const : undefined
   const channel: ChannelRef = {

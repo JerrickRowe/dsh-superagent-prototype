@@ -78,6 +78,11 @@ describe('telegram source', () => {
     // A group message without a mention is not addressed.
     expect(telegramTrigger(update(4, { text: 'plain' }), BOT)).not.toHaveProperty('addressed')
   })
+  it('drops a message that carries no text after the mention, such as a photo', () => {
+    // The Bot API puts a photo's caption in `caption`, where translation does not read it, so the Trigger would be empty.
+    expect(telegramTrigger(update(5, { text: '@agent_bot' }), BOT)).toBeUndefined()
+    expect(telegramTrigger(update(6, { text: undefined }), BOT)).toBeUndefined()
+  })
   it('normalizes the mention and detects it case-insensitively', () => {
     expect(normalizeText('@agent_bot fix it', 'agent_bot')).toBe('fix it')
     expect(mentionsBot('@AGENT_BOT go', 'agent_bot')).toBe(true)
