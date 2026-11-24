@@ -45,6 +45,8 @@ export const TelegramConfigSchema = z.object({
     .default([]),
   directMessages: z.boolean().default(true),
   otherChats: z.enum(['none', 'mentions']).default('none'),
+  /** Open a forum topic for a mentioned message in a forum group, as Feishu threads a reply under the message. */
+  autoTopics: z.boolean().default(true),
   pollTimeoutSeconds: z.number().int().min(1).max(60).default(25),
   pollIntervalSeconds: z.number().int().min(1).max(300).default(1),
 }).strict()
@@ -68,20 +70,27 @@ export function mentionsBot(text: string, botUsername?: string): boolean {
   return new RegExp(`(^|[^\\w])@${botUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\w]|$)`, 'i').test(text ?? '')
 }
 
+/** The thread a message belongs to after resolving bot-opened topics: the conversation root and, inside a topic, its id. */
+export type TelegramThread = { root: string; topic?: number }
+
 /**
  * Translates one Telegram update into a Trigger, or undefined for the bot's own messages.
  * A stable id `telegram:<update_id>:<message_id>` makes re-reading a round safe; edits reuse the message id, so an
  * `edited_message` replaces the text of the event already stored rather than opening a second Ticket.
  */
-export function telegramTrigger(update: TelegramUpdate, bot?: TelegramBotInfo | undefined, botId?: number): Trigger | undefined {
+export function telegramTrigger(update: TelegramUpdate, bot?: TelegramBotInfo | undefined, botId?: number,
+  resolved?: TelegramThread): Trigger | undefined {
   const message = update.message ?? update.edited_message
   if (!message || !message.from) return undefined
   const from = message.from
   if (botId !== undefined ? from.id === botId : bot && from.id === bot.id) return undefined
   const chatId = message.chat.id
   const isDirect = message.chat.type === 'private'
-  // A channel topic uses its message_thread_id as the thread root; a plain chat or private chat uses the message itself.
-  const root = message.message_thread_id !== undefined ? String(message.message_thread_id) : String(message.message_id)
+  // A resolved thread (a bot-opened topic, or a topic message mapped back to its origin) wins over the raw update.
+  // Otherwise a forum topic uses its message_thread_id as the thread root and a plain or private chat uses the message itself.
+  const topic = resolved?.topic ?? message.message_thread_id
+  const root = resolved?.root
+    ?? (message.message_thread_id !== undefined ? String(message.message_thread_id) : String(message.message_id))
   const thread = `${chatId}:${root}`
   const text = normalizeText(message.text ?? '', bot?.username)
   const addressed = isDirect ? 'direct' as const
@@ -89,7 +98,8 @@ export function telegramTrigger(update: TelegramUpdate, bot?: TelegramBotInfo | 
   const channel: ChannelRef = {
     source: SOURCE,
     thread: threadKey({ source: SOURCE, id: thread }),
-    address: { chatId: String(chatId), messageId: String(message.message_id), direct: String(isDirect) },
+    address: { chatId: String(chatId), messageId: String(message.message_id), direct: String(isDirect),
+      ...(topic !== undefined ? { topic: String(topic) } : {}) },
   }
   return {
     id: key(SOURCE, String(update.update_id), String(message.message_id)),
@@ -108,6 +118,7 @@ export function telegramTrigger(update: TelegramUpdate, bot?: TelegramBotInfo | 
       root: String(root),
       updateId: update.update_id,
       direct: isDirect,
+      ...(topic !== undefined ? { topic } : {}),
       ...(message.message_thread_id !== undefined ? { messageThreadId: message.message_thread_id } : {}),
       ...(message.reply_to_message ? { replyToMessageId: message.reply_to_message.message_id } : {}),
       ...(from.username ? { fromUsername: from.username } : {}),

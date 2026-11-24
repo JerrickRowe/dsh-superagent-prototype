@@ -22,7 +22,11 @@ export const KV = {
   /** Store: current database schema version. */
   store: { schema: record<number>('schema') },
   /** Telegram Source: the `getUpdates` read cursor (highest `update_id` taken in). */
-  telegram: { cursor: record<number>('telegram-cursor') },
+  telegram: { cursor: record<number>('telegram-cursor'),
+    /** The forum topic the bot opened for a conversation, keyed by chat and the thread root it continues. */
+    topics: family<number, [chat: string, root: string]>('telegram-topic:'),
+    /** The thread root a bot-opened topic continues, keyed by chat and topic id; messages inside the topic read it. */
+    origins: family<string, [chat: string, topic: number]>('telegram-origin:') },
   /** Settings: current revision, per-block revision, and saved settings snapshots (including the current one). */
   settings: { revision: record<number>('settings-revision'),
     block: family<number, [block: SettingsSave]>('settings-block-revision:'),
